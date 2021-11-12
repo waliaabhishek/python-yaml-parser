@@ -1,0 +1,103 @@
+import fileinput
+import shutil
+import os
+import ruamel.yaml
+import re
+import sys
+from collections import OrderedDict
+
+##########################################################################
+
+src = r'test.yaml'
+dest = r'trial.yaml'
+destUpdated = r'trial_updated.yaml'
+destUpdated2 = r'trial_updated_2.yaml'
+destFinal = r'trial_output.yaml'
+
+
+def deletefile(fileName):
+    if os.path.exists(fileName):
+        os.remove(fileName)
+    else:
+        print(fileName + " does not exist")
+
+
+##########################################################################
+
+deletefile(dest)
+deletefile(destUpdated)
+
+shutil.copyfile(src, dest)
+
+##########################################################################
+
+f_source = open(dest, 'r')
+f_dest = open(destUpdated, 'w')
+
+loadData = ruamel.yaml.round_trip_load(f_source, preserve_quotes=True)
+
+
+def updateVersion(inputValue, versionString, versionValue):
+    outValue = inputValue
+    if re.search("^[vV][0-9]$", inputValue[-2:]):
+        outValue = inputValue[:-1] + str(versionValue)
+    else:
+        outValue += versionString + str(versionValue)
+    return outValue
+
+
+def getHighestVersion(*inputValue):
+    ver = 2
+    for item in inputValue:
+        if re.search("^[vV][0-9]$", item[-2:]):
+            ver = int(item[-1])
+            ver += 1
+    return ver
+
+
+#  Update Version
+loadData['info']['version'] = "2.0"
+#  Getting highest versions
+verVal = getHighestVersion(
+    loadData['info']['title'], loadData['info']['x-ibm-name'])
+#  Update Title
+loadData['info']['title'] = updateVersion(
+    loadData['info']['title'], " V", str(verVal))
+# Update x-ibm-name
+loadData['info']['x-ibm-name'] = updateVersion(
+    loadData['info']['x-ibm-name'], "-v", str(verVal))
+# Update Tag names
+for tag in loadData['tags']:
+    tag['name'] = updateVersion(tag["name"], "/v", verVal)
+# Get path Names for updation later as the Key in OrderedDict is not easy to change
+newPaths = dict()
+for path in loadData["paths"].items():
+    if path[0].endswith("}"):
+        temp = path[0].rpartition("/")
+        newPath = updateVersion(temp[0], "/v", verVal) + "/" + temp[2]
+        newPaths[newPath] = path[0]
+    else:
+        newPath = updateVersion(path[0], "/v", verVal)
+        newPaths[newPath] = path[0]
+    # Update the tag names under paths
+    for method in path[1].items():
+        method[1]["tags"][0] = newPath
+
+ruamel.yaml.round_trip_dump(loadData, f_dest)
+
+f_source.close()
+f_dest.close()
+
+# Replace the path strings here after the file is rendered.
+with open(destUpdated, 'r') as fp:
+    with open(destUpdated2, 'w') as final:
+        for line in fp:
+            for key, value in newPaths.items():
+                if re.search(value + ":", line):
+                    line = re.sub(value + ":$", key + ":", line)
+                    break
+            final.write(line)
+
+deletefile(dest)
+deletefile(destUpdated)
+os.rename(destUpdated2, destFinal)
